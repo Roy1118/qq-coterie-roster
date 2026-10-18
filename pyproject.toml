@@ -1,0 +1,21 @@
+[project]
+name = "qq-group-roster"
+version = "1.0.0"
+description = "小团体花名册：本地群友重合、活跃度与群关系分析"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "UNLICENSED" }
+dependencies = []
+
+[project.scripts]
+qq-roster = "qqroster.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["qqroster*"]
+
+[tool.setuptools.package-data]
+qqroster = ["static/*"]

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>小团体花名册 · QQ 群友分析</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">群</div>
+        <div class="brand-text">
+          <strong>小团体花名册</strong>
+          <span>QQ 群友关系分析</span>
+        </div>
+      </div>
+
+      <nav class="nav" id="nav">
+        <a href="#/dashboard" data-route="dashboard"><i>◈</i><span>概览</span></a>
+        <a href="#/groups" data-route="groups"><i>▤</i><span>群聊</span></a>
+        <a href="#/overlap" data-route="overlap"><i>⨯</i><span>交叉分析</span></a>
+        <a href="#/members" data-route="members"><i>⌕</i><span>群友</span></a>
+        <a href="#/activity" data-route="activity"><i>⚡</i><span>活跃度</span></a>
+        <a href="#/network" data-route="network"><i>◉</i><span>群网络</span></a>
+        <a href="#/data" data-route="data"><i>⚙</i><span>登录与数据</span></a>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="privacy-pill"><span class="dot"></span> 数据仅存本机</div>
+        <button class="theme-toggle" id="themeToggle" type="button" title="切换主题">◐ 切换主题</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-title">
+          <h1 id="pageTitle">概览</h1>
+          <p id="pageSubtitle">你的 QQ 群友关系全景</p>
+        </div>
+        <div class="topbar-actions">
+          <button class="account-chip" id="accountChip" type="button" title="登录状态">
+            <span class="account-dot"></span>
+            <span id="accountText">未登录</span>
+          </button>
+          <button class="btn btn-primary" id="syncButton" type="button">同步数据</button>
+        </div>
+      </header>
+
+      <div class="global-progress" id="globalProgress" hidden>
+        <div class="global-progress-bar"><span id="globalProgressFill"></span></div>
+        <span class="global-progress-text" id="globalProgressText">同步中…</span>
+      </div>
+
+      <div class="view" id="view"></div>
+    </main>
+  </div>
+
+  <div id="modalRoot"></div>
+  <div id="toastRoot" class="toast-root"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
