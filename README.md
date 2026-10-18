@@ -144,6 +144,7 @@ GET  https://qun.qq.com/cgi-bin/qun_info/get_members_info_v1?gc={群号}&friends
 │   └── static/             # 无依赖前端（HTML/CSS/JS）
 │       └── memes/          # 13 张抽象表情包
 ├── tests/                  # 标准库 unittest
+├── docs/                   # B 站视频脚本与发布文案
 └── data/                   # 运行时生成，已 gitignore
     ├── roster.db           # 群和成员数据
     └── avatars/            # 群头像 / 群友头像缓存
