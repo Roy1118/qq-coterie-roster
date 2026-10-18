@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="dark">
+<html lang="zh-CN" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -11,7 +11,7 @@
   <div class="app">
     <aside class="sidebar" id="sidebar">
       <div class="brand">
-        <div class="brand-mark">群</div>
+        <div class="brand-mark"><img src="/static/memes/01-logo.png" alt="双击搞小团体"></div>
         <div class="brand-text">
           <strong>小团体花名册</strong>
           <span>QQ 群友关系分析</span>
@@ -21,6 +21,7 @@
       <nav class="nav" id="nav">
         <a href="#/dashboard" data-route="dashboard"><i>◈</i><span>概览</span></a>
         <a href="#/groups" data-route="groups"><i>▤</i><span>群聊</span></a>
+        <a href="#/focus" data-route="focus"><i>◎</i><span>单群透视</span></a>
         <a href="#/overlap" data-route="overlap"><i>⨯</i><span>交叉分析</span></a>
         <a href="#/members" data-route="members"><i>⌕</i><span>群友</span></a>
         <a href="#/activity" data-route="activity"><i>⚡</i><span>活跃度</span></a>
@@ -53,6 +54,8 @@
         <div class="global-progress-bar"><span id="globalProgressFill"></span></div>
         <span class="global-progress-text" id="globalProgressText">同步中…</span>
       </div>
+
+      <div class="next-step" id="nextStep" hidden></div>
 
       <div class="view" id="view"></div>
     </main>

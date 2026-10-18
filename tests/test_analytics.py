@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from qqroster import analytics, export
+from qqroster.avatars import AvatarStore, fallback_svg, sniff_mime
 from qqroster.client import QunClient
 from qqroster.db import Database
 
@@ -128,6 +129,30 @@ class AnalyticsTest(unittest.TestCase):
         self.assertEqual(len(net["edges"]), 1)
         self.assertEqual(len(net["nodes"]), 2)
 
+    def test_focus_group(self) -> None:
+        data = analytics.focus_group(self.db, "g1")
+        self.assertIsNotNone(data)
+        assert data is not None
+        stats = data["stats"]
+        self.assertEqual(stats["total"], 3)
+        self.assertEqual(stats["only_here"], 1)
+        self.assertEqual(stats["one_other"], 1)
+        self.assertEqual(stats["two_other"], 1)
+        self.assertEqual(stats["three_plus"], 0)
+        self.assertEqual(stats["multi_group"], 2)
+        related = {r["gc"]: r["shared"] for r in data["related"]}
+        self.assertEqual(related["g2"], 2)
+        self.assertEqual(related["g3"], 1)
+        u1 = next(m for m in data["members"] if m["uin"] == "u1")
+        self.assertEqual(u1["other_count"], 2)
+        self.assertEqual(u1["current"]["card"], "群一名片")
+        others = {g["gc"]: g for g in u1["other_groups"]}
+        self.assertEqual(others["g2"]["card"], "群二名片")
+        self.assertTrue(data["ego"]["nodes"][0]["center"])
+
+    def test_focus_group_missing(self) -> None:
+        self.assertIsNone(analytics.focus_group(self.db, "nope"))
+
     def test_groups_with_stats(self) -> None:
         groups = {g["gc"]: g for g in analytics.groups_with_stats(self.db)}
         self.assertEqual(groups["g1"]["member_count"], 3)
@@ -173,6 +198,40 @@ class AnalyticsTest(unittest.TestCase):
         self.assertEqual(result["groups"], 3)
         self.assertEqual(result["members"], 8)
         self.assertEqual(db2.counts()["unique_members"], 5)
+
+
+class AvatarTest(unittest.TestCase):
+    def test_sniff_mime(self) -> None:
+        self.assertEqual(sniff_mime(b"\x89PNG\r\n\x1a\nrest"), "image/png")
+        self.assertEqual(sniff_mime(b"\xff\xd8\xffrest"), "image/jpeg")
+        self.assertEqual(sniff_mime(b"GIF89arest"), "image/gif")
+        self.assertIsNone(sniff_mime(b"not an image"))
+
+    def test_fallback_escapes_text(self) -> None:
+        data, ctype = fallback_svg("<A&B>", "seed")
+        self.assertEqual(ctype, "image/svg+xml")
+        text = data.decode("utf-8")
+        self.assertIn("&lt;A", text)
+        self.assertNotIn("<A&B>", text)
+
+    def test_cache_hit_and_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = AvatarStore(tmp)
+            cached = Path(tmp) / "users" / "123.img"
+            cached.parent.mkdir(parents=True)
+            cached.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+            data, ctype = store.user("123", "nick")
+            self.assertEqual(ctype, "image/png")
+            self.assertEqual(data, cached.read_bytes())
+
+            old = AvatarStore._fetch
+            AvatarStore._fetch = staticmethod(lambda url: None)  # type: ignore[assignment]
+            try:
+                data, ctype = store.user("999", "测试")
+            finally:
+                AvatarStore._fetch = old  # type: ignore[assignment]
+            self.assertEqual(ctype, "image/svg+xml")
+            self.assertIn("测试", data.decode("utf-8"))
 
 
 class FakeClient(QunClient):

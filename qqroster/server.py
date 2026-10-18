@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import analytics, export
 from .auth import start_qr_login
+from .avatars import AvatarStore
 from .client import QunApiError
 from .db import Database
 from .sync import SessionMissing, SyncManager, verify_and_save_cookie
@@ -76,6 +77,7 @@ class App:
         self.db = db
         self.sync = SyncManager(db)
         self.qr = QrStore(db)
+        self.avatars = AvatarStore(db.path.parent / "avatars", db)
 
     def session_info(self) -> dict[str, Any]:
         cookie = self.db.get_meta("session_cookie") or ""
@@ -110,6 +112,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
         self.wfile.write(body)
+
+    def _bytes(self, data: bytes, ctype: str, cache_seconds: int = 604800) -> None:
+        if ctype == "image/svg+xml":
+            # 占位图不要缓存太久，网络恢复后尽快重试真实头像
+            cache_seconds = min(cache_seconds, 300)
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", f"public, max-age={cache_seconds}")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(data)
 
     def _file(self, path: Path, download_name: str | None = None) -> None:
         if not path.is_file():
@@ -256,6 +270,37 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/stats":
             self._json(analytics.overview(self.app.db))
+            return
+        if path == "/api/focus":
+            gc = self._one(qs, "gc")
+            if not gc:
+                raise ApiError(400, "请选择一个群")
+            data = analytics.focus_group(
+                self.app.db, gc, self._int(qs, "limit", 2000, 1, 5000)
+            )
+            if not data:
+                raise ApiError(404, "群不存在或尚未同步")
+            self._json(data)
+            return
+        if path.startswith("/api/avatar/group/"):
+            gc = unquote(path[len("/api/avatar/group/") :])
+            if not gc.isdigit():
+                raise ApiError(400, "群号格式不正确")
+            group = self.app.db.get_group(gc) or {}
+            data, ctype = self.app.avatars.group(gc, group.get("name") or gc)
+            self._bytes(data, ctype)
+            return
+        if path.startswith("/api/avatar/user/"):
+            uin = unquote(path[len("/api/avatar/user/") :])
+            if not uin.isdigit():
+                raise ApiError(400, "QQ 号格式不正确")
+            with self.app.db.session() as conn:
+                row = conn.execute(
+                    "SELECT MAX(nick) n FROM members WHERE uin = ?", (uin,)
+                ).fetchone()
+            nick = (row["n"] if row else "") or uin
+            data, ctype = self.app.avatars.user(uin, nick)
+            self._bytes(data, ctype)
             return
         if path == "/api/overlap":
             groups = self._group_ids(self._one(qs, "groups"))

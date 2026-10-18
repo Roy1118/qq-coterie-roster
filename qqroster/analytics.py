@@ -617,6 +617,151 @@ def multi_group(db: Database, min_groups: int = 2, limit: int = 300) -> list[dic
     return rows
 
 
+def focus_group(db: Database, gc: str, limit: int = 2000) -> dict[str, Any] | None:
+    """单群透视：这个群的成员还在哪些群、各自的群名片是什么。"""
+    gc = str(gc)
+    group = db.get_group(gc)
+    if not group:
+        return None
+
+    with db.session() as conn:
+        members = _rows(
+            conn,
+            "SELECT * FROM members WHERE gc = ? ORDER BY last_speak_time DESC, uin ASC",
+            (gc,),
+        )
+        uins = [m["uin"] for m in members]
+        memberships: dict[str, list[dict[str, Any]]] = {}
+        for chunk in _chunks(uins):
+            rows = _rows(
+                conn,
+                f"""
+                SELECT m.uin, m.gc, COALESCE(NULLIF(g.name, ''), g.gc) group_name,
+                       m.nick, m.card, m.join_time, m.last_speak_time,
+                       m.is_owner, m.is_admin, m.is_friend, m.level
+                FROM members m
+                LEFT JOIN groups g ON g.gc = m.gc
+                WHERE m.uin IN ({_placeholders(len(chunk))})
+                ORDER BY m.last_speak_time DESC
+                """,
+                chunk,
+            )
+            for r in rows:
+                memberships.setdefault(r["uin"], []).append(r)
+
+        group_sizes = {
+            r["gc"]: int(r["n"])
+            for r in _rows(conn, "SELECT gc, COUNT(*) n FROM members GROUP BY gc")
+        }
+        group_names = {
+            r["gc"]: (r["name"] or r["gc"]) for r in _rows(conn, "SELECT gc, name FROM groups")
+        }
+
+    only_here = 0
+    one_other = 0
+    two_other = 0
+    three_plus = 0
+    related_counts: dict[str, int] = {}
+    out: list[dict[str, Any]] = []
+
+    for m in members:
+        all_rows = memberships.get(m["uin"], [])
+        others = [r for r in all_rows if r["gc"] != gc]
+        others.sort(key=lambda r: (r["last_speak_time"] or 0), reverse=True)
+        count = len(others)
+        if count == 0:
+            only_here += 1
+        elif count == 1:
+            one_other += 1
+        elif count == 2:
+            two_other += 1
+        else:
+            three_plus += 1
+        for r in others:
+            related_counts[r["gc"]] = related_counts.get(r["gc"], 0) + 1
+
+        current = {
+            "gc": gc,
+            "group_name": group.get("name") or gc,
+            "nick": m.get("nick") or "",
+            "card": m.get("card") or "",
+            "join_time": int(m.get("join_time") or 0),
+            "last_speak_time": int(m.get("last_speak_time") or 0),
+            "is_owner": bool(m.get("is_owner")),
+            "is_admin": bool(m.get("is_admin")),
+            "is_friend": bool(m.get("is_friend")),
+        }
+        out.append(
+            {
+                "uin": m["uin"],
+                "nick": m.get("nick") or "",
+                "card": m.get("card") or "",
+                "level": int(m.get("level") or 0),
+                "join_time": int(m.get("join_time") or 0),
+                "last_speak_time": int(m.get("last_speak_time") or 0),
+                "is_friend": bool(m.get("is_friend")),
+                "is_owner": bool(m.get("is_owner")),
+                "is_admin": bool(m.get("is_admin")),
+                "other_count": count,
+                "other_groups": others,
+                "current": current,
+            }
+        )
+
+    out.sort(key=lambda x: (-x["other_count"], -x["last_speak_time"], x["uin"]))
+    total = len(out)
+    multi_group = total - only_here
+
+    related = [
+        {
+            "gc": rgc,
+            "name": group_names.get(rgc) or rgc,
+            "shared": int(count),
+            "member_count": int(group_sizes.get(rgc, 0)),
+        }
+        for rgc, count in sorted(related_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
+    top_related = related[:16]
+
+    ego_nodes = [
+        {
+            "gc": gc,
+            "name": group.get("name") or gc,
+            "member_count": total,
+            "center": True,
+        }
+    ] + [
+        {"gc": r["gc"], "name": r["name"], "member_count": r["member_count"], "center": False}
+        for r in related[:8]
+    ]
+    ego_edges = [{"a": gc, "b": r["gc"], "shared": r["shared"]} for r in related[:8]]
+
+    return {
+        "group": group,
+        "stats": {
+            "total": total,
+            "multi_group": multi_group,
+            "only_here": only_here,
+            "one_other": one_other,
+            "two_other": two_other,
+            "three_plus": three_plus,
+            "bridge": three_plus,
+            "related_groups": len(related_counts),
+            "avg_other_groups": round(sum(x["other_count"] for x in out) / total, 2) if total else 0,
+        },
+        "distribution": [
+            {"key": "0", "label": "只在本群", "count": only_here},
+            {"key": "1", "label": "还在 1 个群", "count": one_other},
+            {"key": "2", "label": "还在 2 个群", "count": two_other},
+            {"key": "3+", "label": "还在 3+ 个群", "count": three_plus},
+        ],
+        "related": top_related,
+        "members": out[:limit],
+        "truncated": total > limit,
+        "ego": {"nodes": ego_nodes, "edges": ego_edges},
+    }
+
+
 def network(db: Database, min_shared: int = 1, max_nodes: int = 40, max_edges: int = 160) -> dict[str, Any]:
     data = matrix(db, limit=max_nodes)
     edges = [e for e in data["edges"] if e["shared"] >= min_shared][:max_edges]
