@@ -33,7 +33,7 @@
 要求：Python 3.10+（Windows / macOS / Linux 均可），**不需要安装任何第三方包**。
 
 ```bash
-git clone <你的仓库地址> qq-coterie-roster
+git clone https://github.com/Roy1118/qq-coterie-roster.git
 cd qq-coterie-roster
 python app.py
 ```
