@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小团体花名册 · 视频成片演示（真截图驱动）</title>
+<!--
+  小团体花名册 · 视频成片演示页
+  ============================================================
+  按「每镜头一页 + 统一播放器底盘 + 镜头推拉 + cue 对齐口播」的机制做成：
+  画面 = docs/screenshots/ 里的真截图，用镜头运动（推/拉/平移）串成一支片子。
+  打开就能全屏自动播放，录屏 + 自己配音即可成片。
+
+  安全：所有画面都是 tools/make_demo_data.py 生成的虚构演示数据的截图，
+        不含任何真实 QQ 账号、真实群或真实群友信息。
+
+  准备（先截图，再播放）：
+      python tools/make_demo_data.py --db "%TEMP%/roster-demo/roster.db"
+      python app.py --port 8792 --no-open --data "%TEMP%/roster-demo/roster.db"
+      node tools/make_screenshots.mjs --base http://127.0.0.1:8792 --out docs/screenshots
+
+  快捷键：空格 播放/暂停 · ← → 上一镜/下一镜 · R 录制模式 · F 全屏 · Esc 退出
+-->
+<style>
+:root {
+  --ink: #f4ead9;
+  --accent: #ff6b5e;
+  --accent-2: #ffb703;
+  --font: "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  --mono: "Cascadia Code", Consolas, "SFMono-Regular", monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #14100c; }
+
+/* 设计稿 1600x900，等比缩放到窗口 */
+#stageWrap { position: fixed; inset: 0; display: grid; place-items: center; }
+#stage { width: 1600px; height: 900px; position: relative; overflow: hidden; transform-origin: center center; background: #14100c; }
+
+/* ---------------- 镜头层 ---------------- */
+.shot { position: absolute; inset: 0; opacity: 0; visibility: hidden; transition: opacity .55s ease; }
+.shot.on { opacity: 1; visibility: visible; }
+#shotBg { z-index: 1; }
+#shotBg img { position: absolute; width: 100%; height: 100%; object-fit: cover; transform-origin: var(--ox, 50%) var(--oy, 50%); }
+/* 每镜一套 Ken Burns：--kb 由 JS 注入，时长与镜头一致 */
+#shotBg img.kb { animation: kb var(--kbdur, 10s) linear forwards; }
+@keyframes kb { from { transform: scale(var(--z0, 1)) translate(var(--x0, 0), var(--y0, 0)); } to { transform: scale(var(--z1, 1)) translate(var(--x1, 0), var(--y1, 0)); } }
+
+/* 交叉淡化时，上一张留在下面 */
+#shotPrev { z-index: 0; }
+#shotPrev img { position: absolute; width: 100%; height: 100%; object-fit: cover; }
+
+/* 暖色暗角，统一氛围 */
+#vignette { position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  background:
+    radial-gradient(120% 90% at 50% 45%, rgba(0,0,0,0) 45%, rgba(20,16,12,.55) 100%),
+    linear-gradient(180deg, rgba(20,16,12,.30) 0%, rgba(0,0,0,0) 26%, rgba(0,0,0,0) 62%, rgba(20,16,12,.42) 100%);
+}
+
+/* ---------------- 画面层：标题 / 要点 / 结尾 ---------------- */
+.fx { position: absolute; inset: 0; z-index: 3; opacity: 0; visibility: hidden; transition: opacity .45s ease; pointer-events: none; }
+.fx.on { opacity: 1; visibility: visible; }
+.fx-center { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 0 96px; height: 100%; }
+.fx-left { display: flex; flex-direction: column; justify-content: center; height: 100%; padding: 0 110px; }
+
+.kicker { display: inline-flex; align-items: center; gap: 9px; padding: 7px 18px; border-radius: 999px; background: rgba(244,234,217,.12); border: 1px solid rgba(244,234,217,.22); color: var(--accent-2); font-size: 15px; font-weight: 600; backdrop-filter: blur(6px); }
+h1.big { font-size: 82px; line-height: 1.14; margin: 28px 0 0; color: var(--ink); font-weight: 800; letter-spacing: -1px; text-shadow: 0 4px 34px rgba(0,0,0,.55); }
+h1.big em { font-style: normal; color: var(--accent); }
+h2.mid { font-size: 56px; line-height: 1.2; margin: 0; color: var(--ink); font-weight: 800; text-shadow: 0 4px 30px rgba(0,0,0,.55); }
+p.lead { font-size: 23px; color: rgba(244,234,217,.86); margin: 22px 0 0; line-height: 1.7; text-shadow: 0 2px 18px rgba(0,0,0,.5); max-width: 1000px; }
+.rule { width: 92px; height: 5px; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); margin: 26px 0; }
+
+.title-stats { display: flex; gap: 62px; margin-top: 52px; }
+.ts { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.ts strong { font-size: 52px; font-variant-numeric: tabular-nums; color: var(--ink); text-shadow: 0 4px 24px rgba(0,0,0,.5); }
+.ts span { font-size: 15px; color: rgba(244,234,217,.68); letter-spacing: .5px; }
+.ts:nth-child(1) strong { color: var(--accent); }
+.ts:nth-child(2) strong { color: #3cc4ad; }
+.ts:nth-child(3) strong { color: #f07ab8; }
+.ts:nth-child(4) strong { color: var(--accent-2); }
+
+/* 要点卡（左对齐，压在半透明底上） */
+.bullets { display: flex; flex-direction: column; gap: 17px; margin-top: 8px; max-width: 1020px; }
+.bullet { display: flex; align-items: flex-start; gap: 15px; font-size: 37px; font-weight: 700; color: var(--ink); line-height: 1.42; text-shadow: 0 3px 22px rgba(0,0,0,.6); }
+.bullet i { font-style: normal; flex: none; width: 46px; height: 46px; border-radius: 14px; background: rgba(255,107,94,.9); color: #fff; display: grid; place-items: center; font-size: 22px; margin-top: 4px; }
+.bullet em { font-style: normal; color: var(--accent-2); }
+
+/* 结尾 */
+.end-url { font-family: var(--mono); font-size: 31px; padding: 20px 38px; border-radius: 18px; background: rgba(244,234,217,.1); border: 1px solid rgba(244,234,217,.25); color: var(--accent-2); font-weight: 700; backdrop-filter: blur(8px); }
+.cmds { font-family: var(--mono); font-size: 19px; background: rgba(20,16,12,.82); color: var(--ink); padding: 24px 30px; border-radius: 18px; line-height: 2.05; min-width: 760px; text-align: left; border: 1px solid rgba(244,234,217,.14); }
+.cmds .c { color: #86d9c5; }
+
+/* 每镜小标签：左上角一条渐隐字幕带，压住截图也不糊 */
+.chapter { position: absolute; left: 0; top: 0; z-index: 4; display: flex; align-items: center; gap: 13px; padding: 26px 60px 26px 54px; border-bottom-right-radius: 999px; background: linear-gradient(90deg, rgba(18,14,10,.94) 0%, rgba(18,14,10,.78) 58%, rgba(18,14,10,0) 100%); opacity: 0; visibility: hidden; transition: opacity .4s ease; }
+.chapter.on { opacity: 1; visibility: visible; }
+.chapter b { font-size: 30px; color: var(--ink); font-weight: 800; letter-spacing: -.3px; }
+.chapter s { text-decoration: none; font-size: 15px; color: var(--accent-2); padding: 5px 14px; border-radius: 999px; background: rgba(255,183,3,.14); border: 1px solid rgba(255,183,3,.28); white-space: nowrap; }
+
+/* 更黑的底衬，让白字在浅色截图上也能看清 */
+.scrim { position: absolute; inset: 0; z-index: 2; pointer-events: none; opacity: 0; transition: opacity .5s ease; }
+.scrim.on { opacity: 1; }
+.scrim-left { background: linear-gradient(90deg, rgba(18,14,10,.90) 0%, rgba(18,14,10,.78) 40%, rgba(18,14,10,.22) 68%, rgba(0,0,0,0) 100%); }
+.scrim-center { background: radial-gradient(80% 70% at 50% 50%, rgba(18,14,10,.90) 0%, rgba(18,14,10,.72) 55%, rgba(18,14,10,.35) 100%); }
+
+/* ---------------- 入场动画 ---------------- */
+.run .fade { opacity: 0; animation: fadeUp .62s cubic-bezier(.2,.7,.3,1) forwards; animation-delay: var(--d, 0s); }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+.run .pop { opacity: 0; animation: pop .5s cubic-bezier(.2,.8,.3,1.2) forwards; animation-delay: var(--d, 0s); }
+@keyframes pop { from { opacity: 0; transform: scale(.9); } to { opacity: 1; transform: none; } }
+
+/* ---------------- HUD ---------------- */
+#hud { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 60; display: flex; align-items: center; gap: 10px; padding: 10px 15px; border-radius: 999px; background: rgba(22,17,13,.88); backdrop-filter: blur(9px); color: var(--ink); font-family: var(--font); font-size: 13px; }
+#hud button { border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.08); color: inherit; border-radius: 999px; padding: 6px 13px; font-size: 13px; font-family: inherit; cursor: pointer; }
+#hud button:hover { background: rgba(255,255,255,.18); }
+#hud .t { font-variant-numeric: tabular-nums; opacity: .82; min-width: 88px; text-align: center; }
+#progress { width: 330px; height: 6px; border-radius: 999px; background: rgba(255,255,255,.16); overflow: hidden; cursor: pointer; }
+#progressFill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+#cuePanel { position: fixed; right: 18px; top: 18px; width: 430px; max-height: 70vh; overflow: auto; z-index: 60; background: rgba(22,17,13,.9); backdrop-filter: blur(9px); color: var(--ink); border-radius: 14px; padding: 15px 17px; font-family: var(--font); font-size: 13.5px; line-height: 1.75; }
+#cuePanel h3 { font-size: 12.5px; opacity: .6; font-weight: 600; margin: 0 0 7px; }
+#cuePanel .scene-name { color: var(--accent-2); font-weight: 700; margin-bottom: 7px; font-size: 14px; }
+#cuePanel .say { padding: 9px 11px; border-radius: 10px; background: rgba(255,255,255,.06); margin-top: 8px; }
+#cuePanel .cnt { opacity: .62; font-size: 12.5px; margin-top: 4px; display: block; }
+#countdown { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; background: #14100c; color: var(--ink); font-family: var(--font); font-size: 200px; font-weight: 800; }
+#countdown[hidden] { display: none; }
+body.rec #hud, body.rec #cuePanel, body.rec .chapter { display: none; }
+#err { position: fixed; inset: 0; z-index: 95; display: none; place-items: center; background: #14100c; color: var(--ink); font-family: var(--font); text-align: center; padding: 40px; }
+#err.on { display: grid; }
+#err code { font-family: var(--mono); color: var(--accent-2); font-size: 13.5px; }
+</style>
+</head>
+<body>
+<div id="stageWrap"><div id="stage">
+
+  <div class="shot" id="shotPrev"></div>
+  <div class="shot" id="shotBg"></div>
+  <div class="scrim scrim-left" id="scrimLeft"></div>
+  <div class="scrim scrim-center" id="scrimCenter"></div>
+  <div id="vignette"></div>
+
+  <div class="fx" id="fxText"></div>
+
+  <div class="chapter" id="chapter"><b id="chapterTitle"></b><s id="chapterSub"></s></div>
+
+</div></div>
+
+<div id="countdown" hidden>3</div>
+
+<div id="err">
+  <div>
+    <h2 style="font-size:30px;margin:0 0 14px">还没有截图</h2>
+    <p style="color:rgba(244,234,217,.75);font-size:15px;line-height:1.9">
+      这个演示页读的是 <code>docs/screenshots/*.png</code>。<br>
+      先生成一次截图，再刷新本页：
+    </p>
+    <p style="font-family:var(--mono);font-size:13.5px;line-height:2;color:#86d9c5;text-align:left;display:inline-block;margin-top:16px">
+      python tools/make_demo_data.py --db "%TEMP%/roster-demo/roster.db"<br>
+      python app.py --port 8792 --no-open --data "%TEMP%/roster-demo/roster.db"<br>
+      node tools/make_screenshots.mjs --base http://127.0.0.1:8792 --out docs/screenshots
+    </p>
+  </div>
+</div>
+
+<div id="hud">
+  <button id="btnPlay">⏸ 暂停</button>
+  <span class="t" id="timeText">0:00 / 0:00</span>
+  <div id="progress"><div id="progressFill"></div></div>
+  <button id="btnPrev">◀◀</button>
+  <button id="btnNext">▶▶</button>
+  <button id="btnRec">⏺ 录制模式</button>
+</div>
+
+<div id="cuePanel">
+  <h3>口播提示（录制模式自动隐藏）</h3>
+  <div class="scene-name" id="cueName">—</div>
+  <div id="cueShot"></div>
+  <div class="say" id="cueText">—</div>
+  <span class="cnt" id="cueCount"></span>
+</div>
+
+<script>
+"use strict";
+
+/* ================================================================
+   分镜表：一镜一段口播。
+   shot        —— 用哪张截图（docs/screenshots/<shot>.png）
+   dur         —— 这一镜多长（秒），按口播长度调
+   zoom        —— 镜头运动：[起始缩放, 结束缩放]，>1 是推近
+   pan         —— 平移：[起x, 起y, 终x, 终y]，单位 %
+   overlay     —— 叠在上面的画面层文案（title / bullets / end）
+   ================================================================ */
+const CUTS = [
+  {
+    id: "hook",
+    dur: 11,
+    overlay: {
+      type: "title",
+      kicker: "✦ QQ 群友关系分析 · 小团体花名册",
+      title: '谁和你混在同一个<em>小团体</em>里？',
+      lead: "读取你自己已加入的群，在本地算出跨群重合、活跃度与群关系网络",
+      stats: [["20", "个群"], ["1,800", "位群友"], ["805", "位跨群"], ["1,121", "位活跃"]],
+      tag: "演示数据 · 不含任何真实账号或群友信息"
+    },
+    say: "我加了二十个 QQ 群，一直有个问题没人能回答：这一千八百多个群友里，到底谁同时在好几个群里？于是我写了个小工具，把这个问题彻底解决了——而且它不上传任何数据，全部跑在你自己电脑上。"
+  },
+  {
+    id: "pain",
+    dur: 9,
+    overlay: {
+      type: "bullets",
+      title: "这些问题，QQ 本身查不出来",
+      items: [
+        "这两个群，有多少人是<em>重叠</em>的？",
+        "某个群里的谁，还在<em>哪些群</em>？他在别的群又叫什么？",
+        "谁最近突然<em>不说话了</em>？谁又是<em>刚进来</em>的？"
+      ],
+      foot: "手动一个个群去对名单，二十个群都要对到明年。"
+    },
+    say: "这些问题纯靠 QQ 查不出来：这两个群有多少人重叠？某个群里谁还在别的群？谁最近突然不说话了，谁又是刚进来的？手动一个个群去对名单，群一多就对到明年。"
+  },
+  {
+    id: "dashboard",
+    shot: "01-dashboard",
+    dur: 13,
+    zoom: [1.0, 1.07],
+    chapter: ["概览", "四个核心数字 · 跨群排行"],
+    say: "这个工具叫小团体花名册。打开概览页，四个核心数字直接摆出来：群聊数、独立群友、跨群群友和七日活跃。跨群最多的人排在下面，点一下就能看 TA 的完整轨迹。"
+  },
+  {
+    id: "dashboard2",
+    shot: "02-dashboard-bottom",
+    dur: 11,
+    zoom: [1.05, 1.0],
+    pan: [0, -1.5, 0, 1.5],
+    chapter: ["概览", "活跃度分布 · 入群趋势"],
+    say: "往下是活跃度分布和入群趋势，按每位群友最近一次发言时间来统计，一眼就能看出这个群是热闹还是凉了。想按群看人，就去单群透视。"
+  },
+  {
+    id: "focus",
+    shot: "05-focus",
+    dur: 14,
+    zoom: [1.0, 1.08],
+    pan: [0, -1, 0, 1],
+    chapter: ["单群透视", "跨群名单 · 桥梁成员"],
+    say: "单群透视是我最常用的。选一个群，这群人还在哪些群、在别的群用什么群名片，全部列出来。有个数字叫桥梁成员——除了本群，还在三个以上其他群的人，他们通常就是把不同小团体连起来的关键节点。"
+  },
+  {
+    id: "focus2",
+    shot: "06-focus-bottom",
+    dur: 8,
+    zoom: [1.06, 1.0],
+    chapter: ["单群透视", "跨群分布 · 关系辐射图"],
+    say: "右下方还有跨群分布和本群的关系辐射图，一眼看到这个群跟谁走得最近。"
+  },
+  {
+    id: "modal",
+    shot: "03-member-modal",
+    dur: 11,
+    zoom: [1.03, 1.0],
+    chapter: ["群友画像", "TA 加入的所有群"],
+    say: "点开任意一个群友，TA 加入的所有群、每个群的群名片、最早入群时间和最后发言时间全部列出来；下面还有同群最多的人，也就是跟 TA 最常混在一起的那些人。"
+  },
+  {
+    id: "overlap",
+    shot: "07-overlap",
+    dur: 13,
+    zoom: [1.0, 1.07],
+    chapter: ["交叉分析", "两个群的重合度"],
+    say: "交叉分析是刚需。选两个群：左边是只在这一个群的人，中间是两个群都待着的，右边是只在另一个群的。选三个群以上，就换成共同成员数、去重后总人数，还有一个 Jaccard 重合度。这份名单能一键导出 CSV。"
+  },
+  {
+    id: "overlap2",
+    shot: "08-overlap-matrix",
+    dur: 9,
+    zoom: [1.05, 1.0],
+    chapter: ["交叉分析", "群重合矩阵"],
+    say: "下面还有一张群重合矩阵，两个群之间的共同成员数精确到个位数，点单元格就能直接跳到那两个群的名单。"
+  },
+  {
+    id: "members",
+    shot: "09-members",
+    dur: 9,
+    zoom: [1.04, 1.0],
+    chapter: ["群友检索", "按昵称 / 群名片搜索"],
+    say: "群友页可以按 QQ 号、昵称或者群名片搜索，也能一键只看跨群群友。"
+  },
+  {
+    id: "activity",
+    shot: "10-activity",
+    dur: 10,
+    zoom: [1.0, 1.06],
+    chapter: ["活跃度", "活跃 / 潜水 / 新入群"],
+    say: "活跃度分三种视角：最近活跃的、长期潜水的、刚进群的，时间窗口从七天到一年随便调，还能只看某一个群。"
+  },
+  {
+    id: "groups",
+    shot: "04-groups",
+    dur: 9,
+    zoom: [1.03, 1.0],
+    chapter: ["群聊", "每个群的成员与活跃"],
+    say: "群聊页是全部群的卡片，每个群显示成员数、七日活跃和九十天潜水人数，也可以单独同步某一个群。"
+  },
+  {
+    id: "net-force",
+    shot: "11-network-force",
+    dur: 13,
+    zoom: [1.08, 1.0],
+    pan: [1, -1, -1, 1],
+    chapter: ["群网络", "力导向图：看整体结构"],
+    say: "重头戏是群网络，三种画法。力导向图看整体结构：节点是群，大小代表人数，连线是两个群之间的重合人数，滚轮能缩放、拖着能平移，点一个节点就聚焦到它身上。像这个夜猫子交流群，就是整个关系的中心。"
+  },
+  {
+    id: "net-chord",
+    shot: "12-network-chord",
+    dur: 11,
+    zoom: [1.0, 1.04],
+    chapter: ["群网络", "和弦图：看群之间的流量"],
+    say: "切到和弦图，它看的是流量：丝带越粗，说明两个群之间来回跑的人越多。哪些群是同一个圈子的，一眼就能看出来。"
+  },
+  {
+    id: "net-heat",
+    shot: "13-network-heatmap",
+    dur: 10,
+    zoom: [1.06, 1.0],
+    pan: [0, -2, 0, 0],
+    chapter: ["群网络", "热力图：精确比较两两群"],
+    say: "热力图适合精确比较两两群，每个格子里是准确的共同成员数。还能调最少共同成员和显示群数，群多的时候不至于糊成一团。"
+  },
+  {
+    id: "dark",
+    shot: "15-dark-theme",
+    dur: 7,
+    zoom: [1.0, 1.05],
+    chapter: ["深色主题", "晚上看也不刺眼"],
+    say: "界面还带深色主题，晚上看也不刺眼。"
+  },
+  {
+    id: "privacy",
+    shot: "14-data",
+    dur: 13,
+    zoom: [1.0, 1.06],
+    chapter: ["隐私与数据", "只存本机"],
+    say: "最后说隐私，这也是我敢自己用的原因：所有数据只写进本机的一个 SQLite 文件，只请求腾讯的登录和群域名，没有任何上报、统计和云同步。需要留档可以导出 CSV 或 JSON，换电脑导入 JSON 就恢复。"
+  },
+  {
+    id: "end",
+    dur: 12,
+    overlay: {
+      type: "end",
+      title: "代码全部开源",
+      url: "github.com/Roy1118/qq-coterie-roster",
+      cmds: [
+        '<span class="c">git clone</span> https://github.com/Roy1118/qq-coterie-roster.git',
+        '<span class="c">cd</span> qq-coterie-roster',
+        '<span class="c">python</span> app.py'
+      ],
+      notes: ["Python 3.10+ · 零第三方依赖 · 浏览器自动打开 127.0.0.1:8765",
+              "点绿色 Code 按钮 → Download ZIP，就能拿到全部文件"]
+    },
+    say: "代码全部开源，三行命令就能跑起来，不需要装任何第三方库，点了 Code 再点 Download ZIP 就能拿到全部文件。链接在简介和置顶评论。"
+  }
+];
+
+/* ---------------- 时间轴 ---------------- */
+let acc = 0;
+CUTS.forEach((c, i) => { c.index = i; c.start = acc; acc += c.dur; });
+const TOTAL = acc;
+
+const stage = document.getElementById("stage");
+const shotBg = document.getElementById("shotBg");
+const shotPrev = document.getElementById("shotPrev");
+const fxText = document.getElementById("fxText");
+const chapterEl = document.getElementById("chapter");
+const chapterTitle = document.getElementById("chapterTitle");
+const chapterSub = document.getElementById("chapterSub");
+const scrimLeft = document.getElementById("scrimLeft");
+const scrimCenter = document.getElementById("scrimCenter");
+
+let idx = -1;
+let playing = true;
+let clock = 0;
+let lastTs = 0;
+
+const pad2 = (n) => String(n).padStart(2, "0");
+const mmss = (s) => `${Math.floor(s / 60)}:${pad2(Math.floor(s % 60))}`;
+
+/* ---------------- 画面层渲染 ---------------- */
+function overlayHtml(o) {
+  if (!o) return "";
+  if (o.type === "title") {
+    const stats = (o.stats || []).map(([v, l], i) =>
+      `<div class="ts pop" style="--d:${(0.75 + i * 0.14).toFixed(2)}s"><strong>${v}</strong><span>${l}</span></div>`).join("");
+    return `<div class="fx-center">
+      <div class="kicker fade" style="--d:.05s">${o.kicker}</div>
+      <h1 class="big fade" style="--d:.28s">${o.title}</h1>
+      <p class="lead fade" style="--d:.52s">${o.lead}</p>
+      <div class="title-stats">${stats}</div>
+      <p class="lead fade" style="--d:1.5s;font-size:15px;opacity:.65;margin-top:38px">${o.tag}</p>
+    </div>`;
+  }
+  if (o.type === "bullets") {
+    const items = (o.items || []).map((t, i) =>
+      `<div class="bullet fade" style="--d:${(0.3 + i * 0.55).toFixed(2)}s"><i>!</i><div>${t}</div></div>`).join("");
+    return `<div class="fx-left">
+      <h2 class="mid fade" style="--d:.05s">${o.title}</h2>
+      <div class="rule fade" style="--d:.2s"></div>
+      <div class="bullets">${items}</div>
+      <p class="lead fade" style="--d:${(0.3 + (o.items || []).length * 0.55 + 0.35).toFixed(2)}s;font-size:24px;opacity:.8">${o.foot}</p>
+    </div>`;
+  }
+  if (o.type === "end") {
+    const cmds = (o.cmds || []).map((c) => `<div>${c}</div>`).join("");
+    const notes = (o.notes || []).map((n, i) =>
+      `<p class="lead fade" style="--d:${(1.0 + i * 0.2).toFixed(2)}s;font-size:16px;opacity:.75;margin-top:8px">${n}</p>`).join("");
+    return `<div class="fx-center">
+      <h2 class="mid fade" style="--d:.05s">${o.title}</h2>
+      <div class="rule fade" style="--d:.2s"></div>
+      <div class="end-url pop" style="--d:.4s">${o.url}</div>
+      <div class="cmds fade" style="--d:.7s;margin-top:26px">${cmds}</div>
+      ${notes}
+    </div>`;
+  }
+  return "";
+}
+
+/* ---------------- 镜头切换 ---------------- */
+function enter(i) {
+  const c = CUTS[i];
+  if (!c) return;
+
+  // 有截图的镜头：把当前帧推到下层做交叉淡化，再淡入新帧
+  if (c.shot) {
+    const cur = shotBg.querySelector("img");
+    shotPrev.innerHTML = cur ? `<img src="${cur.getAttribute("src")}">` : "";
+    shotPrev.classList.add("on");
+
+    const z0 = (c.zoom && c.zoom[0]) || 1;
+    const z1 = (c.zoom && c.zoom[1]) || 1;
+    const p = c.pan || [0, 0, 0, 0];
+    shotBg.innerHTML = `<img class="kb" alt="" style="
+      --kbdur:${c.dur + 0.9}s;
+      --z0:${z0}; --z1:${z1};
+      --x0:${p[0]}%; --y0:${p[1]}%; --x1:${p[2]}%; --y1:${p[3]}%;
+      --ox:${50 + (p[0] + p[2]) / 2}%; --oy:${50 + (p[1] + p[3]) / 2}%">`;
+    const img = shotBg.querySelector("img");
+    img.src = `screenshots/${c.shot}.png`;
+    img.addEventListener("error", () => {
+      document.getElementById("err").classList.add("on");
+    });
+    shotBg.classList.add("on");
+  } else {
+    // 纯文案镜头（标题 / 要点 / 结尾）：不放截图，用深色底
+    shotBg.innerHTML = "";
+    shotBg.classList.remove("on");
+    shotPrev.classList.remove("on");
+  }
+
+  // 画面层
+  fxText.innerHTML = overlayHtml(c.overlay);
+  fxText.classList.toggle("on", Boolean(c.overlay));
+  scrimLeft.classList.toggle("on", Boolean(c.overlay && c.overlay.type === "bullets"));
+  scrimCenter.classList.toggle("on", Boolean(c.overlay && c.overlay.type !== "bullets"));
+  if (c.overlay) {
+    fxText.classList.remove("run");
+    void fxText.offsetWidth;
+    fxText.classList.add("run");
+  }
+
+  // 分镜标签
+  if (c.chapter) {
+    chapterTitle.textContent = c.chapter[0];
+    chapterSub.textContent = c.chapter[1];
+    chapterEl.classList.add("on");
+  } else {
+    chapterEl.classList.remove("on");
+  }
+
+  // 口播提示
+  document.getElementById("cueName").textContent = `第 ${i + 1} / ${CUTS.length} 镜 · ${c.id} · ${c.dur}s`;
+  document.getElementById("cueShot").textContent = c.shot ? `画面：screenshots/${c.shot}.png` : "画面：纯文案页";
+  document.getElementById("cueText").textContent = c.say || "";
+  document.getElementById("cueCount").textContent = `约 ${(c.say || "").length} 字 / ${c.dur} 秒`;
+
+  idx = i;
+}
+
+/* ---------------- 主循环 ---------------- */
+function tick(ts) {
+  if (!lastTs) lastTs = ts;
+  const dt = Math.min(0.1, (ts - lastTs) / 1000);
+  lastTs = ts;
+  if (playing) clock += dt;
+
+  if (clock >= TOTAL) {
+    clock = TOTAL - 0.01;
+    playing = false;
+    setPlayBtn();
+  }
+
+  let i = CUTS.findIndex((c) => clock >= c.start && clock < c.start + c.dur);
+  if (i === -1) i = CUTS.length - 1;
+  if (i !== idx) enter(i);
+
+  document.getElementById("progressFill").style.width = ((clock / TOTAL) * 100).toFixed(2) + "%";
+  document.getElementById("timeText").textContent = `${mmss(clock)} / ${mmss(TOTAL)}`;
+  requestAnimationFrame(tick);
+}
+
+/* ---------------- 控制 ---------------- */
+const btnPlay = document.getElementById("btnPlay");
+function setPlayBtn() { btnPlay.textContent = playing ? "⏸ 暂停" : "▶ 播放"; }
+function togglePlay() { playing = !playing; lastTs = 0; setPlayBtn(); }
+function seek(t) {
+  clock = Math.max(0, Math.min(TOTAL - 0.01, t));
+  const i = CUTS.findIndex((c) => clock >= c.start && clock < c.start + c.dur);
+  const target = i === -1 ? CUTS.length - 1 : i;
+  if (target !== idx) enter(target);
+}
+function jump(delta) {
+  const i = CUTS.findIndex((c) => clock >= c.start && clock < c.start + c.dur);
+  const cur = i === -1 ? CUTS.length - 1 : i;
+  const next = CUTS[Math.max(0, Math.min(CUTS.length - 1, cur + delta))];
+  seek(next.start + 0.05);
+  shotPrev.classList.remove("on");
+}
+
+btnPlay.onclick = togglePlay;
+document.getElementById("btnPrev").onclick = () => jump(-1);
+document.getElementById("btnNext").onclick = () => jump(1);
+document.getElementById("progress").onclick = (e) => {
+  const r = e.currentTarget.getBoundingClientRect();
+  seek(((e.clientX - r.left) / r.width) * TOTAL);
+};
+
+const countdown = document.getElementById("countdown");
+document.getElementById("btnRec").onclick = async () => {
+  document.body.classList.add("rec");
+  try { await document.documentElement.requestFullscreen(); } catch (err) { /* 拒绝全屏也能继续 */ }
+  countdown.hidden = false;
+  let n = 3;
+  countdown.textContent = n;
+  const iv = setInterval(() => {
+    n--;
+    if (n > 0) { countdown.textContent = n; return; }
+    clearInterval(iv);
+    countdown.hidden = true;
+    clock = 0; idx = -1; playing = true; lastTs = 0;
+    shotPrev.classList.remove("on");
+    setPlayBtn();
+  }, 1000);
+};
+
+document.addEventListener("keydown", (e) => {
+  if (e.code === "Space") { e.preventDefault(); togglePlay(); }
+  else if (e.code === "ArrowRight") jump(1);
+  else if (e.code === "ArrowLeft") jump(-1);
+  else if (e.key === "r" || e.key === "R") document.getElementById("btnRec").click();
+  else if (e.key === "f" || e.key === "F") {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+    else document.exitFullscreen();
+  } else if (e.key === "Escape") document.body.classList.remove("rec");
+});
+document.addEventListener("fullscreenchange", () => {
+  if (!document.fullscreenElement) document.body.classList.remove("rec");
+});
+
+/* ---------------- 缩放适配 ---------------- */
+function fit() {
+  const s = Math.min(window.innerWidth / 1600, window.innerHeight / 900);
+  stage.style.transform = `scale(${s})`;
+}
+fit();
+window.addEventListener("resize", fit);
+
+/* ---------------- 启动 ---------------- */
+enter(0);
+setPlayBtn();
+document.getElementById("cuePanel").style.display = "none";
+document.getElementById("cuePanel").removeAttribute("style");
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
